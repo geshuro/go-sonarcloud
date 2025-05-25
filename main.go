@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/reinoudk/go-sonarcloud/sonarcloud"
 	"github.com/reinoudk/go-sonarcloud/sonarcloud/project_branches"
+	"github.com/reinoudk/go-sonarcloud/sonarcloud/project_pull_requests"
 	"github.com/reinoudk/go-sonarcloud/sonarcloud/projects"
 	"io"
 	"log"
@@ -47,7 +48,13 @@ func main() {
 		if err != nil {
 			log.Fatalf("could not search projects: %+v", err)
 		}
-		//fmt.Printf("%+v\n", c.Key)
+		res1, err := client.ProjectPullRequests.List(project_pull_requests.ListRequest{
+			Project: c.Key,
+		})
+		if err != nil {
+			log.Fatalf("could not search projects pullrequest: %+v", err)
+		}
+		fmt.Printf("%+v\n", res1.PullRequests[0])
 		for _, b := range res.Branches {
 			if b.IsMain {
 				records = append(records, []string{c.Key, b.Name, fmt.Sprintf("%t", b.IsMain), b.Status.QualityGateStatus})
