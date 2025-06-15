@@ -37,28 +37,51 @@ func main() {
 	}
 
 	records := [][]string{
-		{"Project", "Branch", "Main", "QualityGateStatus"},
+		{"Project", "Branch", "Contributors", "QualityGateStatus", "Bugs", "Vulnerabilities", "CodeSmells", "AnalysisDate", "URL"},
 	}
-
-	//fmt.Printf("%+v\n", res.Components[0].Key)
-	for _, c := range res.Components[:1] {
+	// Add a header row to the CSV
+	for _, c := range res.Components {
 		res, err := client.ProjectBranches.List(project_branches.ListRequest{
 			Project: c.Key,
 		})
 		if err != nil {
 			log.Fatalf("could not search projects: %+v", err)
 		}
-		res1, err := client.ProjectPullRequests.List(project_pull_requests.ListRequest{
-			Project: c.Key,
-		})
-		if err != nil {
-			log.Fatalf("could not search projects pullrequest: %+v", err)
-		}
-		fmt.Printf("%+v\n", res1.PullRequests[0])
 		for _, b := range res.Branches {
 			if b.IsMain {
-				records = append(records, []string{c.Key, b.Name, fmt.Sprintf("%t", b.IsMain), b.Status.QualityGateStatus})
-				//fmt.Printf("Project: %s, Branch: %s, Main: %s, QualityGateStatus: %s\n", c.Key, b.Name, b.IsMain, b.Status.QualityGateStatus)
+				res1, err := client.ProjectPullRequests.List(project_pull_requests.ListRequest{
+					Project: c.Key,
+				})
+				if err != nil {
+					log.Fatalf("could not search projects pullrequest: %+v", err)
+				}
+				contributorsName := ""
+				urlPullRequest := ""
+				if len(res1.PullRequests) > 0 {
+					if len(res1.PullRequests[0].Contributors) > 0 {
+						contributorsName = res1.PullRequests[0].Contributors[0].Name
+					}
+					if res1.PullRequests[0].Url != "" {
+						urlPullRequest = res1.PullRequests[0].Url
+					}
+				}
+				analysisDate := ""
+				if b.AnalysisDate != "" && b.AnalysisDate != "null" {
+					dt, err := time.Parse("2006-01-02T15:04:05-0700", b.AnalysisDate)
+					if err != nil {
+						log.Fatalf("invalid date format: %v", err)
+					}
+					analysisDate = dt.Format("02-01-2006")
+				}
+				records = append(records, []string{c.Key,
+					b.Name,
+					contributorsName,
+					b.Status.QualityGateStatus,
+					fmt.Sprintf("%v", int(b.Status.Bugs)),
+					fmt.Sprintf("%v", int(b.Status.Vulnerabilities)),
+					fmt.Sprintf("%v", int(b.Status.CodeSmells)),
+					fmt.Sprintf("%v", analysisDate),
+					urlPullRequest})
 			}
 		}
 	}
