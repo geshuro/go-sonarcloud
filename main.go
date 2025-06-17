@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -92,57 +93,67 @@ func main() {
 
 	// Use []Record instead of [][]string
 	var records []Record
-	// Add a header row separately for CSV generation
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 	header := []string{"Project", "Branch", "Contributors", "QualityGateStatus", "Bugs", "Vulnerabilities", "CodeSmells", "AnalysisDate", "URL"}
-	// Add a header row to the CSV
-	for _, c := range prj.Components[:5] {
-		prjBr, err := client.ProjectBranches.List(project_branches.ListRequest{
-			Project: c.Key,
-		})
-		if err != nil {
-			log.Fatalf("Could not search projects branches: %+v", err)
-		}
-		for _, b := range prjBr.Branches {
-			if b.IsMain {
-				prjPr, err := client.ProjectPullRequests.List(project_pull_requests.ListRequest{
-					Project: c.Key,
-				})
-				if err != nil {
-					log.Fatalf("Could not search projects pullrequest: %+v", err)
-				}
-				contributorsName := ""
-				urlPullRequest := ""
-				if len(prjPr.PullRequests) > 0 {
-					if len(prjPr.PullRequests[0].Contributors) > 0 {
-						contributorsName = prjPr.PullRequests[0].Contributors[0].Name
-					}
-					if prjPr.PullRequests[0].Url != "" {
-						urlPullRequest = prjPr.PullRequests[0].Url
-					}
-				}
-				analysisDate := ""
-				if b.AnalysisDate != "" && b.AnalysisDate != "null" {
-					dt, err := time.Parse("2006-01-02T15:04:05-0700", b.AnalysisDate)
-					if err != nil {
-						log.Fatalf("invalid date format: %v", err)
-					}
-					analysisDate = dt.Format("02-01-2006")
-				}
-				// Append as Record struct
-				records = append(records, Record{
-					Project:           c.Key,
-					Branch:            b.Name,
-					Contributors:      contributorsName,
-					QualityGateStatus: b.Status.QualityGateStatus,
-					Bugs:              int(b.Status.Bugs),
-					Vulnerabilities:   int(b.Status.Vulnerabilities),
-					CodeSmells:        int(b.Status.CodeSmells),
-					AnalysisDate:      analysisDate,
-					URL:               urlPullRequest,
-				})
+
+	for _, c := range prj.Components {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			prjBr, err := client.ProjectBranches.List(project_branches.ListRequest{
+				Project: c.Key,
+			})
+			if err != nil {
+				log.Printf("Could not search projects branches: %+v", err)
+				return
 			}
-		}
+			for _, b := range prjBr.Branches {
+				if b.IsMain {
+					prjPr, err := client.ProjectPullRequests.List(project_pull_requests.ListRequest{
+						Project: c.Key,
+					})
+					if err != nil {
+						log.Printf("Could not search projects pullrequest: %+v", err)
+						continue
+					}
+					contributorsName := ""
+					urlPullRequest := ""
+					if len(prjPr.PullRequests) > 0 {
+						if len(prjPr.PullRequests[0].Contributors) > 0 {
+							contributorsName = prjPr.PullRequests[0].Contributors[0].Name
+						}
+						if prjPr.PullRequests[0].Url != "" {
+							urlPullRequest = prjPr.PullRequests[0].Url
+						}
+					}
+					analysisDate := ""
+					if b.AnalysisDate != "" && b.AnalysisDate != "null" {
+						dt, err := time.Parse("2006-01-02T15:04:05-0700", b.AnalysisDate)
+						if err != nil {
+							log.Printf("invalid date format: %v", err)
+						} else {
+							analysisDate = dt.Format("02-01-2006")
+						}
+					}
+					mu.Lock()
+					records = append(records, Record{
+						Project:           c.Key,
+						Branch:            b.Name,
+						Contributors:      contributorsName,
+						QualityGateStatus: b.Status.QualityGateStatus,
+						Bugs:              int(b.Status.Bugs),
+						Vulnerabilities:   int(b.Status.Vulnerabilities),
+						CodeSmells:        int(b.Status.CodeSmells),
+						AnalysisDate:      analysisDate,
+						URL:               urlPullRequest,
+					})
+					mu.Unlock()
+				}
+			}
+		}()
 	}
+	wg.Wait()
 	// Generate a file name with the current date and time
 	nameFile := generateFileName("sonarcloud", "csv")
 	// Generate and upload the CSV file using the new records struct
