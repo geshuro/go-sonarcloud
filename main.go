@@ -83,7 +83,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	client := sonarcloud.NewClient(config.sonarCloudOrg, config.sonarCloudToken, nil)
+	// Custom HTTP client with increased connection pool
+	customTransport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		MaxConnsPerHost:     100,
+	}
+	customClient := &http.Client{Transport: customTransport}
+
+	client := sonarcloud.NewClient(config.sonarCloudOrg, config.sonarCloudToken, customClient)
 	req := projects.SearchRequest{}
 
 	prj, err := client.Projects.SearchAll(req)
@@ -99,19 +107,35 @@ func main() {
 
 	for _, c := range prj.Components {
 		wg.Add(1)
+		cCopy := c // capture loop variable for goroutine
 		go func() {
 			defer wg.Done()
-			prjBr, err := client.ProjectBranches.List(project_branches.ListRequest{
-				Project: c.Key,
-			})
-			if err != nil {
+			var prjBr *project_branches.ListResponse
+			var err error
+			maxRetries := 3
+			for attempt := 1; attempt <= maxRetries; attempt++ {
+				prjBr, err = client.ProjectBranches.List(project_branches.ListRequest{
+					Project: cCopy.Key,
+				})
+				if err == nil {
+					break
+				}
+				if err.Error() == "unexpected EOF" {
+					log.Printf("[RETRY] unexpected EOF for project %s (attempt %d/%d)", cCopy.Key, attempt, maxRetries)
+					time.Sleep(time.Duration(attempt) * time.Second)
+					continue
+				}
 				log.Printf("Could not search projects branches: %+v", err)
+				return
+			}
+			if err != nil {
+				log.Printf("Failed to fetch branches for project %s after %d attempts: %v", cCopy.Key, maxRetries, err)
 				return
 			}
 			for _, b := range prjBr.Branches {
 				if b.IsMain {
 					prjPr, err := client.ProjectPullRequests.List(project_pull_requests.ListRequest{
-						Project: c.Key,
+						Project: cCopy.Key,
 					})
 					if err != nil {
 						log.Printf("Could not search projects pullrequest: %+v", err)
@@ -138,7 +162,7 @@ func main() {
 					}
 					mu.Lock()
 					records = append(records, Record{
-						Project:           c.Key,
+						Project:           cCopy.Key,
 						Branch:            b.Name,
 						Contributors:      contributorsName,
 						QualityGateStatus: b.Status.QualityGateStatus,
